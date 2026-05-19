@@ -20,7 +20,36 @@ def load_circuit(text: str) -> QuantumCircuit:
     raise ValueError("Could not parse circuit.\n" + "\n".join(errors))
 
 
+_PRIMITIVE_GATES = {
+    "u", "u1", "u2", "u3", "p", "id",
+    "x", "y", "z", "h", "s", "sdg", "t", "tdg", "sx", "sxdg",
+    "rx", "ry", "rz", "r",
+    "cx", "cz", "cy", "ch", "cp", "crx", "cry", "crz", "cu", "cu1", "cu3",
+    "swap", "iswap", "ccx", "cswap", "rxx", "ryy", "rzz", "rzx",
+    "global_phase",
+}
+
+
+def fully_decompose(qc: QuantumCircuit, max_iters: int = 12) -> QuantumCircuit:
+    """Decompose custom/composite gates recursively until only primitives remain.
+
+    Some groups' optimizers wrap their output in custom QASM gate definitions
+    (e.g. clifford_3q blocks, consolidated 2q unitaries). Qiskit's depth/size
+    methods count those as a single instruction, which would under-report gate
+    counts and depth. We unfold them so all groups are measured the same way.
+    """
+    cur = qc
+    for _ in range(max_iters):
+        names = {ci.operation.name for ci in cur.data}
+        custom = names - _PRIMITIVE_GATES - _SKIP
+        if not custom:
+            return cur
+        cur = cur.decompose(list(custom))
+    return cur
+
+
 def compute_metrics(qc: QuantumCircuit) -> dict:
+    qc = fully_decompose(qc)
     gate_count = sum(1 for ci in qc.data if ci.operation.name not in _SKIP)
     depth = qc.depth(filter_function=lambda ci: ci.operation.name not in _SKIP)
     return {

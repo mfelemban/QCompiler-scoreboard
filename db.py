@@ -31,6 +31,27 @@ def init_db(path: Path) -> sqlite3.Connection:
     )
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS final_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            team_name TEXT NOT NULL,
+            circuit_number INTEGER NOT NULL,
+            submitted_at TEXT NOT NULL,
+            qubit_count INTEGER NOT NULL,
+            depth INTEGER NOT NULL,
+            gate_count INTEGER NOT NULL,
+            score REAL NOT NULL,
+            w1 REAL NOT NULL,
+            w2 REAL NOT NULL,
+            w3 REAL NOT NULL,
+            filename TEXT,
+            verified INTEGER NOT NULL DEFAULT 1,
+            verify_message TEXT,
+            UNIQUE(team_name, circuit_number)
+        )
+        """
+    )
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS config (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -111,4 +132,42 @@ def rescore_all(conn: sqlite3.Connection, w1: float, w2: float, w3: float) -> No
         "score = ?*qubit_count + ?*depth + ?*gate_count",
         (w1, w2, w3, w1, w2, w3),
     )
+    conn.execute(
+        "UPDATE final_submissions SET w1=?, w2=?, w3=?, "
+        "score = ?*qubit_count + ?*depth + ?*gate_count",
+        (w1, w2, w3, w1, w2, w3),
+    )
+    conn.commit()
+
+
+def upsert_final_submission(conn: sqlite3.Connection, **kwargs) -> int:
+    """Insert or replace a final-test score for (team_name, circuit_number)."""
+    cols = ", ".join(kwargs.keys())
+    placeholders = ", ".join("?" * len(kwargs))
+    cursor = conn.execute(
+        f"INSERT INTO final_submissions ({cols}) VALUES ({placeholders}) "
+        "ON CONFLICT(team_name, circuit_number) DO UPDATE SET "
+        "submitted_at=excluded.submitted_at, "
+        "qubit_count=excluded.qubit_count, "
+        "depth=excluded.depth, "
+        "gate_count=excluded.gate_count, "
+        "score=excluded.score, "
+        "w1=excluded.w1, w2=excluded.w2, w3=excluded.w3, "
+        "filename=excluded.filename, "
+        "verified=excluded.verified, "
+        "verify_message=excluded.verify_message",
+        tuple(kwargs.values()),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def all_final_submissions(conn: sqlite3.Connection):
+    return conn.execute(
+        "SELECT * FROM final_submissions ORDER BY team_name ASC, circuit_number ASC"
+    ).fetchall()
+
+
+def delete_final_submission(conn: sqlite3.Connection, submission_id: int) -> None:
+    conn.execute("DELETE FROM final_submissions WHERE id = ?", (submission_id,))
     conn.commit()

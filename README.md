@@ -42,8 +42,58 @@ If you prefer not to push secrets via the UI, you can also deploy to
 
 - **🏆 Scoreboard** — public, anonymous. Shows each team's best verified submission.
 - **📤 Submit** — requires the class password. Uploads are scored & auto-verified live.
+- **🎯 Final Test** — public, read-only. Shows each group's scores on the
+  5 final-test benchmark circuits, plus a ranked total.
 - **🔧 Admin** — requires the admin password. Configure weights, browse / verify /
   delete submissions, download a CSV or the raw SQLite file.
+
+## Final test workflow
+
+The final test runs each group's optimizer against 5 benchmark circuits of
+escalating difficulty (`final_benchmarks/circuit_1_very_easy.qasm` …
+`circuit_5_very_hard.qasm`). Two flows are supported.
+
+### Manual flow (per-team)
+
+The instructor runs the groups' submitted code locally to produce 5 optimized
+QASM files per group, then records the scores with `submit_final.py`:
+
+```bash
+# Score one circuit for one team
+python submit_final.py one --team TeamHadamard --circuit 1 \
+    --file path/to/optimized_circuit_1.qasm
+
+# Batch: folder of files named {team}_circuit{N}.qasm
+python submit_final.py batch --dir path/to/optimized_outputs/
+```
+
+### Automated flow (runner/)
+
+Live in the `Groups/` directory, the runner spawns per-group wrappers as
+subprocesses, scores their output against each of the 5 benchmarks, and
+upserts results to the DB:
+
+```bash
+python runner/run_final_test.py              # all groups, all 5 circuits
+python runner/run_final_test.py ryadh        # one group, all 5 circuits
+python runner/run_final_test.py ryadh c3 c5  # one group, specific circuits
+PER_RUN_TIMEOUT=600 python runner/run_final_test.py fahad c5  # longer budget
+```
+
+Per-group wrappers live in `runner/wrappers/`; converted notebook sources in
+`runner/converted/`; optimized outputs in `runner/outputs/`. After changing
+`scoring.py`, recompute scores from existing outputs without re-running the
+optimizers:
+
+```bash
+python runner/rescore_outputs.py --skip-verify
+```
+
+Re-running with the same `(team, circuit)` overwrites the previous score.
+Scores use the weights currently configured in the admin panel and are
+computed on the **fully decomposed** circuit, so custom gate definitions in
+QASM output (e.g. clifford blocks, consolidated 2q unitaries) are unfolded
+to primitive gates before counting depth and gate count.
 
 ## Automatic equivalence check — limits
 
