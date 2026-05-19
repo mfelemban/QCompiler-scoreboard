@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 DEFAULT_WEIGHTS = {"w1": 10.0, "w2": 1.0, "w3": 1.0}
+SEED_PATH = Path(__file__).parent / "final_seed.json"
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -62,6 +64,33 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     for k, v in DEFAULT_WEIGHTS.items():
         conn.execute(
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, str(v))
+        )
+    conn.commit()
+    _seed_final_submissions(conn)
+
+
+def _seed_final_submissions(conn: sqlite3.Connection) -> None:
+    """Populate final_submissions from final_seed.json on a fresh DB.
+
+    Only runs when the table is empty, so subsequent edits via the admin
+    panel or runner are never overwritten. Each row uses INSERT OR IGNORE
+    against the (team_name, circuit_number) unique key.
+    """
+    if not SEED_PATH.exists():
+        return
+    existing = conn.execute("SELECT COUNT(*) FROM final_submissions").fetchone()[0]
+    if existing:
+        return
+    try:
+        rows = json.loads(SEED_PATH.read_text())
+    except Exception:
+        return
+    for r in rows:
+        cols = ", ".join(r.keys())
+        placeholders = ", ".join("?" * len(r))
+        conn.execute(
+            f"INSERT OR IGNORE INTO final_submissions ({cols}) VALUES ({placeholders})",
+            tuple(r.values()),
         )
     conn.commit()
 
