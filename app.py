@@ -7,8 +7,10 @@ import pandas as pd
 import streamlit as st
 
 from db import (
+    all_final_submissions,
     all_submissions,
     best_per_team,
+    delete_final_submission,
     delete_submission,
     get_weights,
     init_db,
@@ -17,6 +19,8 @@ from db import (
     set_verified,
     set_weights,
 )
+
+FINAL_NUM_CIRCUITS = 5
 from scoring import compute_metrics, compute_score, load_circuit, verify_equivalence
 
 APP_DIR = Path(__file__).parent
@@ -197,6 +201,82 @@ def page_submit(conn):
         )
 
 
+def page_final_test(conn):
+    st.title("🎯 Final Test — Group Submissions")
+    st.caption(
+        "Each group's optimizer is run against 5 benchmark circuits "
+        "(circuit 1: very easy → circuit 5: very hard). "
+        "Scores below are computed from the optimized circuit each group produced."
+    )
+
+    weights = get_weights(conn)
+    st.markdown(
+        f"**Score formula:** `Score = {weights['w1']:g} · QubitCount + "
+        f"{weights['w2']:g} · Depth + {weights['w3']:g} · GateCount` — "
+        "*lower is better.*"
+    )
+
+    rows = all_final_submissions(conn)
+    if not rows:
+        st.info("No final-test scores have been recorded yet.")
+        return
+
+    df = pd.DataFrame([dict(r) for r in rows])
+
+    score_pivot = df.pivot_table(
+        index="team_name",
+        columns="circuit_number",
+        values="score",
+        aggfunc="first",
+    )
+    score_pivot = score_pivot.reindex(
+        columns=range(1, FINAL_NUM_CIRCUITS + 1)
+    )
+    score_pivot.columns = [f"Circuit {i}" for i in score_pivot.columns]
+    score_pivot["Total"] = score_pivot.sum(axis=1, skipna=True, min_count=1)
+    score_pivot = score_pivot.sort_values(
+        by="Total", ascending=True, na_position="last"
+    )
+    score_pivot.insert(0, "Rank", range(1, len(score_pivot) + 1))
+    score_pivot = score_pivot.reset_index().rename(columns={"team_name": "Team"})
+
+    display = score_pivot.copy()
+    for col in display.columns:
+        if col not in ("Rank", "Team"):
+            display[col] = display[col].map(
+                lambda x: "—" if pd.isna(x) else f"{x:.2f}"
+            )
+
+    st.subheader("Scores per circuit")
+    st.dataframe(display, hide_index=True, use_container_width=True)
+
+    st.markdown("---")
+    st.subheader("Detailed metrics")
+    detail = df[
+        [
+            "team_name",
+            "circuit_number",
+            "qubit_count",
+            "depth",
+            "gate_count",
+            "score",
+            "submitted_at",
+        ]
+    ].rename(
+        columns={
+            "team_name": "Team",
+            "circuit_number": "Circuit",
+            "qubit_count": "Qubits",
+            "depth": "Depth",
+            "gate_count": "Gates",
+            "score": "Score",
+            "submitted_at": "Submitted",
+        }
+    )
+    detail["Score"] = detail["Score"].map(lambda x: f"{x:.2f}")
+    st.dataframe(detail, hide_index=True, use_container_width=True)
+
+
 def page_admin(conn):
     st.title("🔧 Admin")
 
@@ -301,6 +381,38 @@ def page_admin(conn):
             with st.expander("Circuit source"):
                 st.code(row["circuit_text"] or "", language="text")
 
+    # Final-test admin
+    st.markdown("---")
+    st.subheader("Final-test submissions")
+    final_rows = all_final_submissions(conn)
+    if not final_rows:
+        st.info("No final-test entries yet.")
+    else:
+        fdf = pd.DataFrame([dict(r) for r in final_rows])
+        st.dataframe(
+            fdf[
+                [
+                    "id", "team_name", "circuit_number", "qubit_count",
+                    "depth", "gate_count", "score", "submitted_at",
+                    "verified", "filename",
+                ]
+            ],
+            hide_index=True,
+            use_container_width=True,
+        )
+        fdc1, fdc2 = st.columns([2, 1])
+        with fdc1:
+            del_id = st.number_input(
+                "Final submission ID to delete",
+                min_value=1, step=1, value=int(fdf["id"].max()),
+                key="final_del_id",
+            )
+        with fdc2:
+            if st.button("Delete final entry"):
+                delete_final_submission(conn, int(del_id))
+                st.success(f"Deleted final submission {int(del_id)}.")
+                st.rerun()
+
     if st.button("Lock admin"):
         st.session_state["is_admin"] = False
         st.rerun()
@@ -308,11 +420,16 @@ def page_admin(conn):
 
 def main():
     conn = get_db()
-    page = st.sidebar.radio("Page", ["🏆 Scoreboard", "📤 Submit", "🔧 Admin"])
+    page = st.sidebar.radio(
+        "Page",
+        ["🏆 Scoreboard", "📤 Submit", "🎯 Final Test", "🔧 Admin"],
+    )
     if page == "🏆 Scoreboard":
         page_scoreboard(conn)
     elif page == "📤 Submit":
         page_submit(conn)
+    elif page == "🎯 Final Test":
+        page_final_test(conn)
     else:
         page_admin(conn)
     st.sidebar.markdown("---")
