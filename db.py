@@ -6,9 +6,10 @@ from pathlib import Path
 DEFAULT_WEIGHTS = {"w1": 10.0, "w2": 1.0, "w3": 1.0}
 
 
-def init_db(path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(path, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Idempotent schema setup. Safe to call on every page load — guarantees
+    that all tables exist even if the cached connection predates a code update
+    that added a new table."""
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS submissions (
@@ -63,6 +64,12 @@ def init_db(path: Path) -> sqlite3.Connection:
             "INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)", (k, str(v))
         )
     conn.commit()
+
+
+def init_db(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    ensure_schema(conn)
     return conn
 
 

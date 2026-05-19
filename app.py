@@ -12,6 +12,7 @@ from db import (
     best_per_team,
     delete_final_submission,
     delete_submission,
+    ensure_schema,
     get_weights,
     init_db,
     insert_submission,
@@ -420,6 +421,9 @@ def page_admin(conn):
 
 def main():
     conn = get_db()
+    # Defensive: ensures any new tables added by a code update exist, even if
+    # st.cache_resource is holding a connection that predates the update.
+    ensure_schema(conn)
     page = st.sidebar.radio(
         "Page",
         ["🏆 Scoreboard", "📤 Submit", "🎯 Final Test", "🔧 Admin"],
